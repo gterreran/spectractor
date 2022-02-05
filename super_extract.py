@@ -625,61 +625,7 @@ def extract_trace(_2d_data,_trace_store,_spectrum):
     
     return _spectrum
 
-
-@app.callback(
-    Output("refit_trace_button",'disabled'),
-    #---------------------
-    Trigger("shape-printer", 'n_clicks'),
-    #---------------------
-    State("2d",'figure'),
-    #---------------------
-    prevent_initial_call=True
-)
-def clicker_2d(_fig):
-    debug()
-    
-    for el in _fig['layout']['template']:
-        print(el,_fig['layout']['template'][el])
-
-    return True
-    
-    
-@app.callback(
-    Output("refit_trace_button",'disabled'),
-    #---------------------
-    Input("2d", 'clickAnnotationData'),
-    #---------------------
-    prevent_initial_call=True
-)
-def clicker_2d(_clickData_2d):
-    debug()
-
-    print(_clickData_2d)
-
-    return True
-
-@app.callback(
-    Output("refit_trace_button",'disabled'),
-    #---------------------
-    Input("trace_tracker", 'clickData'),
-    #---------------------
-    prevent_initial_call=True
-)
-def clicker_trace(_clickData_trace):
-    debug()
-
-    print(_clickData_trace)
-
-    return True
     
 if __name__ == '__main__':
     app.run_server(debug=True)
 
-
-
-#fig.update_layout(coloraxis_showscale=False)
-#fig.update_xaxes(showticklabels=False)
-#fig.update_yaxes(showticklabels=False)
-#fig.show()
-#
-#app.run_server(debug=True)
