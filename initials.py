@@ -4,10 +4,10 @@ import json
 
 
 zmin=0
-zmax=1000
+zmax=0
 step=1
 
-fig = px.imshow(np.zeros(shape=(1000,3000)), origin='lower', zmin=0, zmax=1000)
+fig = px.imshow(np.zeros(shape=(1000,3000)), origin='lower', zmin=zmin, zmax=zmax)
 
 fig.layout.dragmode='drawline'
 config = {
@@ -37,13 +37,3 @@ tracetracker = px.scatter(x=[0],y=[0])
 tracetracker.layout.clickmode='event+select'
 tracetracker.layout.hovermode='closest'
 sigmatracker = px.scatter(x=[0],y=[0])
-
-
-
-
-#fig['data'][0]['hovertemplate']=''
-
-#data_0=json.dumps({'data':np.zeros(shape=(1000,3000)).tolist(),
-#        'Y_DIM':1000,
-#        'X_DIM':3000
-#})

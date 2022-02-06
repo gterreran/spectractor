@@ -8,11 +8,13 @@ import initials
 
 
 layout = html.Div([
-    dcc.Store(id='2d_data'),#data=initials.data_0),
-    dcc.Store(id='2d_scales'),
-    dcc.Store(id='trace_points',data='[]'),
-    dcc.Store(id='trace_fit_store',data='[]'),
-    dcc.Store(id='2d_figure_shapes',data='[]'),
+    #dummy div to use as input to inizialize the store at launch, which for some reason it fails.
+    html.Div(id='none',children=[],style={'display': 'none'}),
+    dcc.Store(id='2d-data'),
+    dcc.Store(id='2d-scales'),
+    dcc.Store(id='trace-points',data='[]'),
+    dcc.Store(id='trace-fit-store',data='[]'),
+    dcc.Store(id='2d-figure-shapes',data='[]'),
     html.Div([
         #First display row
         html.Div([
@@ -84,7 +86,8 @@ layout = html.Div([
                             type='number',
                             debounce=True,  #debounce=True let user finish typing the number before updating. Otherwise the change is interactive while the user is typing
                             step=initials.step,
-                            value=initials.zmin
+                            value=initials.zmin,
+                            disabled=True
                         )
                     ],style={'width': '20%','display': 'inline-block'}),
                     html.Div([
@@ -94,6 +97,7 @@ layout = html.Div([
                             max=initials.zmax,
                             step=initials.step,
                             value=[initials.zmin,initials.zmax],
+                            disabled=True
                         )
                     ],style={'width': '60%','display': 'inline-block'}),
                     html.Div([
@@ -104,7 +108,8 @@ layout = html.Div([
                             type='number',
                             debounce=True,
                             step=initials.step,
-                            value=initials.zmax
+                            value=initials.zmax,
+                            disabled=True
                         )
                     ],style={'width': '20%','display': 'inline-block'})
                 ])

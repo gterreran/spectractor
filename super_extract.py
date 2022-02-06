@@ -3,35 +3,24 @@
 #next line are for debugging. It helps figuring out at what line the script is.
 import inspect #import currentframe
 
+import logging,initials
+
 import astropy.io.fits as pf
 from astropy.visualization import ZScaleInterval,MinMaxInterval
 import numpy as np
 import copy,glob,json
 import extract_module as em
 
-import dash,json,sys,os
+import dash,json,sys,os,base64,io
 
 
 import layout
 
 #from dash.long_callback import DiskcacheLongCallbackManager
-from dash.dependencies import Input, Output, State
+#from dash.dependencies import Input, Output, State
 from dash.exceptions import PreventUpdate
 
-from dash_extensions.enrich import Dash,Trigger,ServersideOutput, FileSystemStore
-#from dash_extensions.enrich import DashProxy, TriggerTransform, ServersideOutputTransform
-
-cache_dir="./cache"
-
-output_defaults=dict(backend=FileSystemStore(cache_dir=cache_dir), session_check=True)
-
-print('Emptying cache...',end=' ')
-os.system('rm {}/*'.format(cache_dir))
-print('Done.')
-
-#import diskcache
-#cache = diskcache.Cache("./cache")
-#long_callback_manager = DiskcacheLongCallbackManager(cache)
+from dash_extensions.enrich import Dash,Trigger,ServersideOutput, FileSystemStore, Input, Output, State
 
 
 def debug():
@@ -72,66 +61,97 @@ def as_path(_path, _opacity=1, _color='red', _width=4, _dash='dash'):
     return p
 
 
-#print(type(px.data.iris()))
-#sys.exit()
+#############################################################################################
 
-#app = dash.Dash(__name__, long_callback_manager=long_callback_manager)
-#app = dash.Dash(__name__)
-#app = Dash(__name__)
-app = Dash(output_defaults=output_defaults)
-#app = DashProxy(transforms=[
-#    TriggerTransform(),  # enable use of Trigger objects
-#    ServersideOutputTransform()  # enable use of ServersideOutput objects
-#])
+cache_dir="./cache"
+
+output_defaults=dict(backend=FileSystemStore(cache_dir=cache_dir), session_check=True)
+
+#dash seems to login several times. I found this workaround on the internet
+log = logging.getLogger(__name__)
+app = Dash(__name__, output_defaults=output_defaults)
+
+# remove last handler. The one added by dash
+log.handlers.pop()
 
 app.layout = layout.layout
 
-#############################################################################################
+#initialiaze 2d-data to prevent bug. For some reason I cannot do it in layout importing initials.
+#@app.callback(
+#    ServersideOutput("2d-data",'data'),
+#    Input("none", 'children')
+#    )
+#def mock(none):
+#    print('DIOCANE')
+#    data0={}
+#    data0['data']=np.zeros(shape=(1000,3000))
+#    data0['Y_DIM']=len(data0['data'])
+#    data0['X_DIM']=len(data0['data'][0])
+#    return data0
+
 
 #upload image and storing the data.
 @app.callback(
-    ServersideOutput("2d_data",'data'),
+    ServersideOutput("2d-data",'data'),
+    Output("zmin",'disabled'),
+    Output("zmax",'disabled'),
+    Output("zslider",'disabled'),
     #---------------------
-    Input("load-2d",'filename'),
-    #---------------------
-    prevent_initial_call=True
+    Input("load-2d",'contents'),
 )
-def upload_image(filename):
+def upload_image(_contents):
     debug()
-    
     d,z={},{}
-    d['data']=pf.getdata(filename)
-    d['Y_DIM']=len(d['data'])
-    d['X_DIM']=len(d['data'][0])
+    #I couldn't inizialize the 2d-data store for some reason. So I do it here, allowing this callback to be fired at launch.
+    if _contents is None:
+        d['data']=np.zeros(shape=(1000,3000))
+        d['Y_DIM']=len(d['data'])
+        d['X_DIM']=len(d['data'][0])
+        d['no_trigger']=1
+        
+        return d,True,True,True
     
-    return d
+    #If a proper image is loaded, I also activate the zscale nozles.
+    else:
+        content_type, content_string = _contents.split(',')
+        fits = base64.b64decode(content_string)
+        d['data']=pf.getdata(io.BytesIO(fits))
+        d['Y_DIM']=len(d['data'])
+        d['X_DIM']=len(d['data'][0])
+        d['no_trigger']=0
+        
+        return d,False,False,False
 
 
 #here I handle the contrast nozles.
 @app.callback(
-    Output("2d_scales",'data'),
+    Output("2d-scales",'data'),
     Output("zslider",'value'),
     Output("zslider",'min'),
     Output("zslider",'max'),
     Output("zmin",'value'),
     Output("zmax",'value'),
     #---------------------
-    Input("2d_data",'data'),
+    Input("2d-data",'data'),
     Input("zslider",'value'),
     Input("zmin",'value'),
     Input("zmax",'value'),
     #---------------------
-    State("2d_scales",'data'),
+    State("2d-scales",'data'),
     #---------------------
     prevent_initial_call=True
 )
 def update_scale_2d_and_slider(_2d_data, _zslider, _zmin, _zmax, _zlims_json):
+
+    if _2d_data['no_trigger']==1:
+        raise PreventUpdate
+        
     debug()
     
     ctx = dash.callback_context
     trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
 
-    if trigger_id == "2d_data":
+    if trigger_id == "2d-data":
         z={}
         z['zsmin'],z['zsmax'] = [int(el) for el in ZScaleInterval().get_limits(_2d_data['data'])]
         z['mmmin'],z['mmmax'] = [int(el) for el in MinMaxInterval().get_limits(_2d_data['data'])]
@@ -150,10 +170,10 @@ def update_scale_2d_and_slider(_2d_data, _zslider, _zmin, _zmax, _zlims_json):
 @app.callback(
     Output("2d",'figure'),   #the output is the element with id=2d and will affect the figure component of the element. (Graph has a figure component, of course)
     #---------------------
-    Input("2d_scales",'data'),
-    Input("2d_data",'data'),
+    Input("2d-scales",'data'),
+    Input("2d-data",'data'),
     Input("drawing-style", 'value'),
-    Input("2d_figure_shapes",'data'),
+    Input("2d-figure-shapes",'data'),
     #---------------------
     State("2d",'figure'),       #inputs fire the callback. States don't.
     #State('load_csv', 'value'),
@@ -161,6 +181,10 @@ def update_scale_2d_and_slider(_2d_data, _zslider, _zmin, _zmax, _zlims_json):
     prevent_initial_call=True
 )
 def main_figure_update(_zlims_json, _2d_data, _drawing_style, _shapes, _fig):
+
+    if _2d_data['no_trigger']==1:
+        raise PreventUpdate
+
     debug()
     
     ctx = dash.callback_context
@@ -171,7 +195,7 @@ def main_figure_update(_zlims_json, _2d_data, _drawing_style, _shapes, _fig):
         _fig['layout']['dragmode']=_drawing_style
     
     #storing the shapes in a seperate variable is reduntant, as all the shapes are already stored in the figure. However, it allows to keep just one Output for '2d', as some callbacks that wants to draw, will actually add the shape to the list, which triggers this callback.
-    if "2d_figure_shapes" in trigger_list:
+    if "2d-figure-shapes" in trigger_list:
         shapes=json.loads(_shapes)
 
         #some callback returned a trace to plot on the 2d.
@@ -186,17 +210,16 @@ def main_figure_update(_zlims_json, _2d_data, _drawing_style, _shapes, _fig):
         
         #pass
     
-    if "2d_data" in trigger_list:
+    if "2d-data" in trigger_list:
         _fig['data'][0]['z']=_2d_data['data']
         _fig['layout']['shapes']=[]
         
-    if "2d_scales" in trigger_list:
+    if "2d-scales" in trigger_list:
         z=json.loads(_zlims_json)
         _fig['layout']['coloraxis']['cmin']=z['zsmin']
         _fig['layout']['coloraxis']['cmax']=z['zsmax']
     
     return _fig
-
 
 #zoomin and position
 @app.callback(
@@ -207,7 +230,7 @@ def main_figure_update(_zlims_json, _2d_data, _drawing_style, _shapes, _fig):
     #---------------------
     Input("2d", 'hoverData'),
     #---------------------
-    State("2d_data",'data'),
+    State("2d-data",'data'),
     State("zoomin",'figure'),
     #---------------------
     prevent_initial_call=True
@@ -244,41 +267,25 @@ def display_hover_data(_hoverData, _2d_data, _zoom_fig):
         
     else:
         _zoom_fig['data'][0]['z']=np.zeros(shape=(50,50))
-        return '0','0','0',zoom_fig
-
-
-#@app.callback(
-#    Output("cut",'figure'),
-#    Input("2d", 'clickData')
-#)
-#def display_cut(clickData):
-#    if clickData is not None:
-#        x0=clickData['points'][0]['x']
-#        y0=clickData['points'][0]['y']
-#        y_cut=np.array(d[y0-50:y0+50,x0])
-#
-#        cut['data'][0]['x']=np.arange(x0-50,x0+50)
-#        cut['data'][0]['y']=y_cut
-#        return cut
-#    else:
-#        return px.line(np.zeros(100))
-
+        return '0','0','0',_zoom_fig
 
 #click and drag projection
 @app.callback(
     Output("cut",'figure'),
-    Output("2d_figure_shapes",'data'),
+    Output("2d-figure-shapes",'data'),
     #---------------------
     Input("2d",'relayoutData'),
     #---------------------
-    State("2d_data",'data'),
-    State("2d_figure_shapes",'data'),
+    State("2d-data",'data'),
+    State("2d-figure-shapes",'data'),
     State("cut",'figure'),
     #---------------------
     prevent_initial_call=True
 )
 def drawing_and_storing_as_path(_2d_relayoutData,_2d_data,_shapes_json,_cut_fig):
     #there is an autoshape relayoutData event that triggers, so we need extra precautions to avoid this callback to fire only when we want to.
+    if _2d_relayoutData is None:
+        raise PreventUpdate
     if not any(['shapes' in key for key in _2d_relayoutData]):
         raise PreventUpdate
         
@@ -364,7 +371,7 @@ def update_options(_n_clicks):
     #---------------------
     Trigger("auto-find",'on'),
     #---------------------
-    Input("2d_figure_shapes",'data'),
+    Input("2d-figure-shapes",'data'),
     #---------------------
     State("find-trace",'disabled'),
     #---------------------
@@ -382,7 +389,7 @@ def auto_find_trace_selected(_proj,_state):
 @app.callback(
     Output("extract-trace",'disabled'),
     #---------------------
-    Input("trace_fit_store",'data'),
+    Input("trace-fit-store",'data'),
     #---------------------
     prevent_initial_call=True
 )
@@ -402,9 +409,9 @@ def activate_extract_button(_trace_data):
     Trigger("trace_func_order",'value'),
     Trigger("sigma_func_order",'value'),
     #---------------------
-    Input("trace_fit_store",'data'),
+    Input("trace-fit-store",'data'),
     #---------------------
-    State("trace_points",'data'),
+    State("trace-points",'data'),
     State("refit_trace_button",'disabled'),
     #---------------------
     prevent_initial_call=True
@@ -414,7 +421,7 @@ def activate_refit_button(trace_fit_store, _trace_points, _status):
     ctx = dash.callback_context
     trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
     
-    if trigger_id == "trace_fit_store":
+    if trigger_id == "trace-fit-store":
         return True
     #this prevents to try to refit when there are no data
     elif _trace_points is None:
@@ -428,8 +435,8 @@ def activate_refit_button(trace_fit_store, _trace_points, _status):
     Output("trace_tracker",'figure'),
     Output("sigma_tracker",'figure'),
     #---------------------
-    Input("trace_points",'data'),
-    Input("trace_fit_store",'data'),
+    Input("trace-points",'data'),
+    Input("trace-fit-store",'data'),
     #---------------------
     State("trace_tracker",'figure'),
     State("sigma_tracker",'figure'),
@@ -442,14 +449,14 @@ def trace_and_sigma_figures(_trace_points,_trace_fit,_fig_trace,_fig_sigma):
     ctx = dash.callback_context
     trigger_list = [el['prop_id'].split('.')[0] for el in ctx.triggered]
 
-    if "trace_points" in trigger_list:
+    if "trace-points" in trigger_list:
         _fig_trace['data'][0]['x']=_trace_points[0]
         _fig_trace['data'][0]['y']=_trace_points[1]
 
         _fig_sigma['data'][0]['x']=_trace_points[0]
         _fig_sigma['data'][0]['y']=_trace_points[2]
 
-    if "trace_fit_store" in trigger_list:
+    if "trace-fit-store" in trigger_list:
         _fig_trace['data'][0]['visible']=False
         _fig_trace['data'][0]['visible']=False
     
@@ -521,13 +528,13 @@ def trace_and_sigma_figures(_trace_points,_trace_fit,_fig_trace,_fig_sigma):
 
 
 @app.callback(
-    ServersideOutput("trace_points",'data'),
+    ServersideOutput("trace-points",'data'),
     #---------------------
     Trigger("find-trace",'n_clicks'),
     #---------------------
-    State("2d_data",'data'),
+    State("2d-data",'data'),
     State("auto-find",'on'),
-    State("2d_figure_shapes",'data'),
+    State("2d-figure-shapes",'data'),
     #---------------------
     prevent_initial_call=True
 )
@@ -559,18 +566,18 @@ def find_trace(_2d_data,_auto,_shapes):
     
     
 @app.callback(
-    ServersideOutput("trace_fit_store",'data'),
-    Output("2d_figure_shapes",'data'),
+    ServersideOutput("trace-fit-store",'data'),
+    Output("2d-figure-shapes",'data'),
     #---------------------
     Trigger("refit_trace_button",'n_clicks'),
     #---------------------
-    Input("trace_points",'data'),
+    Input("trace-points",'data'),
     #---------------------
     State("trace_func",'value'),
     State("trace_func_order",'value'),
     State("sigma_func",'value'),
     State("sigma_func_order",'value'),
-    State("2d_figure_shapes",'data'),
+    State("2d-figure-shapes",'data'),
     #---------------------
     prevent_initial_call=True
 )
@@ -611,8 +618,8 @@ def fit_trace(_trace_points, _func_cen_lab, _order_cen, _func_sig_lab, _order_si
     #---------------------
     Trigger("extract-trace",'n_clicks'),
     #---------------------
-    State("2d_data",'data'),
-    State("trace_fit_store",'data'),
+    State("2d-data",'data'),
+    State("trace-fit-store",'data'),
     State("spectrum",'figure'),
     #---------------------
     prevent_initial_call=True
@@ -627,5 +634,10 @@ def extract_trace(_2d_data,_trace_store,_spectrum):
 
     
 if __name__ == '__main__':
+
+    print('Emptying cache...',end=' ')
+    os.system('rm {}/*'.format(cache_dir))
+    print('Done.')
+    
     app.run_server(debug=True)
 
