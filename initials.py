@@ -2,6 +2,8 @@ import plotly.express as px
 import numpy as np
 import json
 
+from dash import html
+
 
 zmin=0
 zmax=0
@@ -17,7 +19,7 @@ config = {
 }
 
 fig.layout.newshape={'line_color':'red','line_dash':'dash'}
-fig.layout.clickmode='event+select'
+#fig.layout.clickmode='event+select'
 #fig.layout.hovermode='closest'
 #fig.layout.captureevents=True
 fig.update_xaxes(fixedrange=True)
@@ -37,3 +39,13 @@ tracetracker = px.scatter(x=[0],y=[0])
 tracetracker.layout.clickmode='event+select'
 tracetracker.layout.hovermode='closest'
 sigmatracker = px.scatter(x=[0],y=[0])
+
+#table=[
+#    html.Tr([
+#        html.Th('Trace',style={'border': '1px solid black'}),
+#        html.Th('Style',style={'border': '1px solid black'}),
+#        html.Th('Action',style={'border': '1px solid black'}),
+#        html.Th('Visible',style={'border': '1px solid black'}),
+#        html.Th('Status',style={'border': '1px solid black'})
+#    ])
+#]

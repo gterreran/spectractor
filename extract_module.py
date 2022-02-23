@@ -3,6 +3,10 @@ from scipy.optimize import curve_fit
 from numpy.polynomial import legendre
 from scipy.interpolate import LSQUnivariateSpline
 
+import io
+import base64
+import matplotlib.pyplot as plt
+plt.switch_backend('Agg')
 
 def gauss(x, a,x0,sigma):
 #    if a<0:
@@ -64,7 +68,13 @@ def find_trace(_sections,_data,auto=0):
 
 
 #By default the uses pickle to cache, which is not able to handle lambda object.
-#For this reason I inserted 'import dill as pickle' in /anaconda3/lib/python3.7/site-packages/flask_caching/backends/filesystemcache.py
+#For this reason I inserted 'import dill as pickle' in
+#/anaconda3/lib/python3.7/site-packages/flask_caching/backends/filesystemcache.py
+#/anaconda3/lib/python3.7/site-packages/flask_caching/backends/simplecache.py
+#/anaconda3/lib/python3.7/site-packages/flask_caching/backends/memcache.py
+#/anaconda3/lib/python3.7/site-packages/flask_caching/backends/rediscache.py
+#/anaconda3/lib/python3.7/site-packages/flask_caching/contrib/uwsgicache.py
+#/anaconda3/lib/python3.7/site-packages/dash_extensions/enrich.py
 class func_base():
     def __init__(self,_fitter,_eval,_ord):
         self.fitter=lambda x,y: _fitter(x,y,int(_ord))
@@ -80,7 +90,34 @@ def func(_lab,_ord):
     if _lab=='Sp3':
         return func_base(legendre.legfit,legendre.legval,_ord)
     
+class xcs:
+    def __init__(self,x,c,s):
+        self.x=x
+        self.c=c
+        self.s=s
+
+class dTrace:
+    def __init__(self):
+        self.trace={}
+        self.all=xcs([],[],[])
+        self.good=xcs([],[],[])
+        self.bad=xcs([],[],[])
+        self.func=xcs(None,None,None)
+        self.opt=xcs(None,None,None)
+        self.visible=True
+        self.status=self.get_status()
+        self.spectrum=[]
     
+    def get_status(self):
+        if len(self.all.x)==0:
+            return 'drawn'
+        elif len(self.good.x)==0:
+            return 'identified'
+        elif len(self.spectrum)==0:
+            return 'fitted'
+        else:
+            return 'extracted'
+
     
 def fit_trace(_positions,_func_cen_lab,_order_cen,_func_sig_lab,_order_sig):
         
@@ -162,7 +199,7 @@ def fit_trace(_positions,_func_cen_lab,_order_cen,_func_sig_lab,_order_sig):
             break
 
  
-    return np.array(good_x).tolist(), np.array(good_c).tolist(), np.array(good_s).tolist(), np.array(bad_x).tolist(), np.array(bad_c).tolist(), np.array(bad_s).tolist(), fit_leg_c.tolist(),fit_leg_s.tolist()
+    return [np.array(good_x).tolist(), np.array(good_c).tolist(), np.array(good_s).tolist(), np.array(bad_x).tolist(), np.array(bad_c).tolist(), np.array(bad_s).tolist(), fit_leg_c.tolist(),fit_leg_s.tolist()]
 
 
 
@@ -173,10 +210,10 @@ def extract_trace(_data,_trace_store):
     
     spectrum=[]
     
-    for c in _trace_store['all_x']:
+    for c in _trace_store.all.x:
         col=np.array(d[:,c])
-        cen=_trace_store['func_c'].eval(c+1,_trace_store['popt_c'])
-        sigma=_trace_store['func_s'].eval(c+1,_trace_store['popt_s'])
+        cen=_trace_store.func.c.eval(c+1,_trace_store.opt.c)
+        sigma=_trace_store.func.s.eval(c+1,_trace_store.opt.s)
 
         bg=np.where(((pix>cen-4.5*sigma)&(pix<cen-2.5*sigma))|((pix>cen+2.5*sigma)&(pix<cen+4.5*sigma)))
 
@@ -307,4 +344,51 @@ def points_to_svg(_xdata,_ydata):
     return svg
             
                 
-            
+def create_children(obj,type):
+    out={}
+    out['props']={'children':obj}
+    out['type']=type
+    out['namespace']='dash_html_components'
+    
+    return out
+
+
+
+def get_trace_style(_i,_s):
+    
+    return '<img src="assets/style_{}_{}.png" alt="delete trace" width="40">'.format(str(_i),_s)
+    
+#    fig=plt.figure()
+#    fig.set_size_inches(0.55, 0.2)
+#    ax=fig.add_subplot()
+#
+#    ax.plot([0.,0.5], [0.5,0.5], color=get_color(_i),lw=3,ls='--',dashes=[4,1])
+#
+#    ax.set_frame_on(False)
+#    ax.set_xticks([])
+#    ax.set_yticks([])
+#
+#    s = io.BytesIO()
+#
+#    fig.savefig(s, format='png', bbox_inches="tight")
+#    plt.close()
+#    s = base64.b64encode(s.getvalue()).decode("utf-8").replace("\n", "")
+#    return f'<img src="data:image/png;base64, {s}">'
+
+def get_color(_i):
+    colors=['#636EFA', '#EF553B', '#00CC96', '#AB63FA', '#FFA15A', '#19D3F3', '#FF6692', '#B6E880', '#FF97FF', '#FECB52']
+    
+    return colors[_i]
+
+
+def shift_path(_path,_pix):
+    
+    out_ss='M'
+    
+    ss= _path[1:].split('L')
+    for p in ss:
+        x,y=p.split(',')
+        out_ss=out_ss + '{},{}L'.format(x,float(y)+_pix)
+    
+    #removing the extra L we put in the string
+    return out_ss[:-1]

@@ -1,7 +1,5 @@
 #import dash_core_components as dcc
-from dash import dcc
-#import dash_html_components as html
-from dash import html
+from dash import dcc,html,dash_table
 import dash_daq as daq
 import initials
 
@@ -12,9 +10,15 @@ layout = html.Div([
     html.Div(id='none',children=[],style={'display': 'none'}),
     dcc.Store(id='2d-data'),
     dcc.Store(id='2d-scales'),
-    dcc.Store(id='trace-points',data='[]'),
-    dcc.Store(id='trace-fit-store',data='[]'),
-    dcc.Store(id='2d-figure-shapes',data='[]'),
+    dcc.Store(id='trace-store'),
+    dcc.Store(id='n_trace',data=-1),
+    dcc.Store(id='store_from_find_trace'),
+    dcc.Store(id='store_from_fit_trace'),
+    #it's just easier to track what the user is doing with a dedicated varible instead of trying to figure it out from how the data change.
+    dcc.Store(id='trace_action', data=''),
+    dcc.Store(id='deleted_traces', data=[]),
+    dcc.Store(id='shape_idx', data=-1), #unique id for new shapes
+    html.Button('Tester', id='tester', n_clicks=0),
     html.Div([
         #First display row
         html.Div([
@@ -114,32 +118,127 @@ layout = html.Div([
                     ],style={'width': '20%','display': 'inline-block'})
                 ])
             ],
-            style={'width': '80%','display': 'inline-block'}
+            style={'width': '60%','display': 'inline-block'}
             ),
             
             html.Div([
-                html.Table(
-                    id='trace_table'
+#                html.Table(
+#                    children=initials.table,
+#                    id='trace_table',
+#                    style={'border': '1px solid black'}
+#                ),
+                dash_table.DataTable(
+                    id='trace_table',
+                    columns=[
+                        {'name': 'Trace','id': 'trace_id','deletable': False,'renamable': False},
+                        {'name': 'Style','id': 'style','type': 'text', 'presentation': 'markdown', 'deletable': False,'renamable': False},
+                        #{'name': 'Action','id': 'delete_icon','type': 'text', 'presentation': 'markdown', 'deletable': False,'renamable': False},
+                        #{'name': 'Action','id': 'up_icon','type': 'text', 'presentation': 'markdown', 'deletable': False,'renamable': False},
+                        #{'name': 'Action','id': 'down_icon','type': 'text', 'presentation': 'markdown', 'deletable': False,'renamable': False},
+                        #{'name': 'Action','id': 'copy_icon','type': 'text', 'presentation': 'markdown', 'deletable': False,'renamable': False},
+                        {'name': 'Visible','id': 'visible_icon','type': 'text', 'presentation': 'markdown', 'deletable': False,'renamable': False},
+                        {'name': 'Status','id': 'status','deletable': False,'renamable': False},
+                    ],
+                    data=[],
+                    style_data_conditional = [{
+                        "if": {"state": "active"},
+                        "backgroundColor": "rgba(150, 180, 225, 0.2)",
+                        "border": "inherit !important",
+                    },
+                    {
+                        "if": {"state": "selected"},
+                        "backgroundColor": "rgba(150, 180, 225, 0.2)",
+                        "border": "inherit !important",
+                    },
+                    {
+                        "if": {"row_index": 0},
+                        "backgroundColor": "rgba(150, 180, 225, 0.2)"
+                        
+                    }],
+                    editable=True,
+                    
+#                    dropdown_conditional=[{
+#                        'if': {
+#                            'column_id':'style'
+#                        },
+#                        'options': [
+#                            {'label': i, 'value': i}
+#                            for i in [
+#                                'Mile End',
+#                                'Plateau',
+#                                'Hochelaga'
+#                            ]
+#                        ]
+#                    }],
+                    
+                    markdown_options={"html": True},
+                    merge_duplicate_headers=True,
                 ),
                 
                 #in order to update the file list everytime I click, I actually record the click on the parent of the dropdown"
-                html.Div(
-                    id='dropdown-parent',
-                    children=[
-                        dcc.Dropdown(
+                html.Div([
+                    html.Div(
+                        id='dropdown-parent',
+                        children=dcc.Dropdown(
                             id="load_csv",
                             searchable=False,
                             placeholder="Load a trace"
                         )
-                    ],
-                    style={'width': '60%','display': 'inline-block'}
+                        
+                    ),
+                    html.Button('Load', id='load-trace', n_clicks=0)
+                ],
+                style={'width': '50%','display': 'inline-block'}
                 ),
                 html.Div(
-                    html.Button('Load', id='load-trace', n_clicks=0),
-                    style={'width': '60%','display': 'inline-block'}
-                )
+                    html.Button('New trace', id='new-trace', n_clicks=0),
+                    style={'width': '40%','display': 'inline-block'}
+                ),
+                html.Button(
+                    children=[html.Img(src='assets/delete.png', style={'width':'60px','margin-left': '0px'})],
+                    id="delete_button", n_clicks=0,
+                    style={'width':'50px','height':'50px'}
+                ),
+                html.Button(
+                    children=[html.Img(src='assets/copy.png', style={'width':'50px','margin-left': '0px'})],
+                    id="copy_button", n_clicks=0,
+                    style={'width':'50px','height':'50px'}
+                ),
+                html.Button(
+                    children=[html.Img(src='assets/up.png', style={'width':'50px','margin-left': '0px'})],
+                    id="move_up_button", n_clicks=0,
+                    style={'width':'50px','height':'50px'}
+                ),
+                html.Button(
+                    children=[html.Img(src='assets/down.png', style={'width':'50px','margin-left': '0px'})],
+                    id="move_down_button", n_clicks=0,
+                    style={'width':'50px','height':'50px'}
+                ),
+                html.Div([
+                    html.Div(
+                        dcc.Input(
+                            id="shift_value",
+                            type='number',
+                            debounce=True,  #debounce=True let user finish typing the number before updating. Otherwise the change is interactive while the user is typing
+                            value=1,
+                        ),
+                        style={'width': '50%','display': 'inline-block'}
+                    ),
+                    html.Div(
+                        dcc.Dropdown(
+                            id="shift_units",
+                            searchable=False,
+                            options=[
+                                {'label': 'pixel', 'value': 'pixel'},
+                                {'label': 'arcsec', 'value': 'arcsec'}
+                            ],
+                            value='pixel'
+                        ),
+                        style={'width': '50%','display': 'inline-block'}
+                    )
+                ])
             ],
-            style={'width': '20%','display': 'inline-block'}
+            style={'width': '40%','display': 'inline-block','verticalAlign': 'top'}
             )
         ]),
     

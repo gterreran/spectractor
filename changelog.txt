@@ -1,0 +1,4 @@
+0.1.0 - February 23rd 2022 
+-Restructured the data structure
+-Added table of traces
+-Added buttons to handle traces and shape drowings
