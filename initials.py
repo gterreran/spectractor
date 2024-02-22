@@ -39,6 +39,7 @@ tracetracker = px.scatter(x=[0],y=[0])
 tracetracker.layout.clickmode='event+select'
 tracetracker.layout.hovermode='closest'
 sigmatracker = px.scatter(x=[0],y=[0])
+trace_profile = px.line(np.zeros(100))
 
 #table=[
 #    html.Tr([

@@ -8,35 +8,50 @@ import logging
 import astropy.io.fits as pf
 from astropy.visualization import ZScaleInterval,MinMaxInterval
 import numpy as np
-import copy,glob,json
 import extract_module as em
-import dash,json,sys,os,base64,io
-from dash import html
+import dash,json,sys,os,base64,io,glob
 
 
-import layout
+import layout,initials
 
-#from dash.long_callback import DiskcacheLongCallbackManager
-#from dash.dependencies import Input, Output, State
 from dash.exceptions import PreventUpdate
+from dash import no_update, callback_context
 
 from dash_extensions.enrich import Dash,Trigger,ServersideOutput, FileSystemStore, Input, Output, State
 
 
 def debug():
-    #print(currentframe().f_back.f_lineno)
+    '''
+    This is just for debuggin purposes. It prints the function in which it is called,
+    and the line at which it is called.
+    '''
+    
     print('{} fired. Line {}.'.format(inspect.stack()[1][3],inspect.stack()[1][2]))
 
+
+
 def check_folder_for_traces():
+    '''
+    As per function name. Search files ending with trace.csv
+    '''
+    
     options=[]
     for f in glob.glob('*trace.csv'):
         options.append({'label': f, 'value': f})
     return options
 
+
+
 def get_path(_pp):
+    '''
+    From a dictionary representing a dash figure, it returns the SVG path.
+    If the original shape was a line, it converts it into a path
+    '''
+
     #free hand path
     if _pp['type']=='path':
         return _pp['path']
+        
     #straigh line
     else:
         x0=_pp['x0']
@@ -45,7 +60,12 @@ def get_path(_pp):
         y1=_pp['y1']
         return 'M{},{}L{},{}'.format(x0,y0,x1,y1)
 
+
+
 def as_path(_path, _opacity=1, _color='red', _width=4, _dash='dash'):
+    '''
+    It takes an SVG path and returns the the full dash shape.
+    '''
     p={'editable': True,
        'xref': 'x',
        'yref': 'y',
@@ -56,16 +76,26 @@ def as_path(_path, _opacity=1, _color='red', _width=4, _dash='dash'):
        'path': _path,
        'clickmode':'event+select',
        'hovermode':'closest'
-}
+    }
     
     return p
 
 
 #############################################################################################
+'''
+NOTES ABOUT DASH AND PLOTLY
 
-#It is not possible to have multiple ServersideOutput pointing to the same object. Only normal Outputs.
-#To circumvent this, I'll have to create proxy Stores to receive the ServersideOutput from different callbacks, and use them as Inputs to update the real final ServersideOutput (trace-store)
+The difference between Input and State, is that State doesn't trigger the callback.
 
+It is not possible to have multiple ServersideOutput pointing to the same object.
+However, with dash_extensions you can have normal Outputs pointing to the same object.
+You don't even need to pack it and unpack it as a json. I'm not sure if the package
+does the conversion under the hood, possibly not as it seems relatively fast.
+A workaround to the ServersideOutput would be to create several proxy variable in the form of
+'Stores' to store the same quantity coming from different callbacks.
+
+Trigger is very useful. Fires a callback without actually using the variable that fired it.
+'''
 
 cache_dir="./cache"
 
@@ -74,17 +104,13 @@ output_defaults=dict(backend=FileSystemStore(cache_dir=cache_dir), session_check
 #dash seems to login several times. I found this workaround on the internet
 log = logging.getLogger(__name__)
 app = Dash(__name__, output_defaults=output_defaults, assets_folder='assets')
-#app = DashProxy(__name__, output_defaults=output_defaults, transforms=[
-#    MultiplexerTransform(),  # makes it possible to target an output multiple times in callbacks
-#    ServersideOutputTransform(),  # enable use of ServersideOutput objects
-#    NoOutputTransform(),  # enable callbacks without output
-#    BlockingCallbackTransform(),  # makes it possible to skip callback invocations while a callback is running
-#])
 
 # remove last handler. The one added by dash
 log.handlers.pop()
 
 app.layout = layout.layout
+
+
 
 #upload image and storing the data.
 @app.callback(
@@ -96,10 +122,17 @@ app.layout = layout.layout
     Output("new-trace",'n_clicks'),
     #---------------------
     Input("load-2d",'contents'),
-    #---------------------
-    State("trace_table",'data')
+    Input("load-2d",'filename'),
 )
-def upload_image(_contents,_trace_table):
+def upload_image(_contents, _filename):
+    '''
+    'load-2d' is an 'Upload' object. The easiest way to treat it, would be to take
+    the 'filename' component and pass it to pyfits. However, the 'filename' component
+    does not retain the path, so it would work only for file in the same directory
+    as this script. So I actually parse the 'contents' component, which is an encoded
+    64bit variable. So I decode it and, just then pass it to pyfits.
+    '''
+
     debug()
     d={}
     #Here I inizialize all the ServersideOutputs
@@ -109,19 +142,44 @@ def upload_image(_contents,_trace_table):
         d['X_DIM']=len(d['data'][0])
         d['no_trigger']=1
         
-        return d,True,True,True,dash.no_update
+        return d,True,True,True,no_update
     
     #If a proper image is loaded, I also activate the zscale nozles.
     else:
         content_type, content_string = _contents.split(',')
         fits = base64.b64decode(content_string)
         d['data']=pf.getdata(io.BytesIO(fits))
+        d['header']=pf.getheader(io.BytesIO(fits))
+        d['filename']=_filename
         d['Y_DIM']=len(d['data'])
         d['X_DIM']=len(d['data'][0])
         d['no_trigger']=0
     
     
         return d,False,False,False,1
+
+
+#upload arc
+@app.callback(
+    ServersideOutput("2d-data-arc",'data'),
+    #---------------------
+    Input("load-2d-arc",'contents'),
+    Input("load-2d-arc",'filename'),
+    #---------------------
+    prevent_initial_call=True
+)
+def upload_image(_contents, _filename):
+    debug()
+    d={}
+    
+    content_type, content_string = _contents.split(',')
+    fits = base64.b64decode(content_string)
+    d['data']=pf.getdata(io.BytesIO(fits))
+    d['header']=pf.getheader(io.BytesIO(fits))
+    d['filename']=_filename
+    
+    
+    return d
     
 
 #here I handle the contrast nozles.
@@ -149,7 +207,7 @@ def update_scale_2d_and_slider(_2d_data, _zslider, _zmin, _zmax, _zlims_json):
         
     debug()
     
-    ctx = dash.callback_context
+    ctx = callback_context
     trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
 
     if trigger_id == "2d-data":
@@ -190,7 +248,7 @@ def main_figure_update(_zlims_json, _2d_data, _drawing_style, _trace_table, _n_t
 
     debug()
     
-    ctx = dash.callback_context
+    ctx = callback_context
     #multiple triggers can occure here, so it's better to check if the trigger is present in a list instead to check that it's the first
     trigger_list = [el['prop_id'].split('.')[0] for el in ctx.triggered]
 
@@ -224,7 +282,16 @@ def main_figure_update(_zlims_json, _2d_data, _drawing_style, _trace_table, _n_t
                     if _fig['layout']['shapes'][sh]['shape_id'] == tr['shape_id']:
                         del _fig['layout']['shapes'][sh]
                         break
-
+        
+        elif _trace_action == 'expand':
+            for tr in _trace_table[_n_trace]['trace_paths']:
+                for sh in range(len(_fig['layout']['shapes'])):
+                    if _fig['layout']['shapes'][sh]['shape_id'] == tr['shape_id']:
+                        del _fig['layout']['shapes'][sh]
+                        break
+            
+            _fig['layout']['shapes'].append(_trace_table[_n_trace]['trace_paths'][-1])
+            
 
     
     if "2d-data" in trigger_list:
@@ -389,35 +456,42 @@ def update_options(_n_clicks):
     Output("find-trace",'disabled'),
     #---------------------
     Input("auto-find",'on'),
+    Input("trace_table",'data'),
     #---------------------
-    State("trace_table",'data'),
     State("n_trace",'data'),
-    State("find-trace",'disabled'),
     #---------------------
     prevent_initial_call=True
 )
-def auto_find_trace_selected(_auto,_trace_table, _n_trace, _state):
-    debug()
+def auto_find_trace_selected(_auto,_trace_table, _n_trace):
     if _auto or len(_trace_table[_n_trace]['trace_paths'])!=0:
         return False
     else:
         return True
     
+    debug()
+
+
 
 @app.callback(
     Output("extract-trace",'disabled'),
+    Output("expand-trace",'disabled'),
     #---------------------
     Input("trace-store",'data'),
-    #---------------------
-    State("n_trace",'data'),
+    Input("n_trace",'data'),
     #---------------------
     prevent_initial_call=True
 )
-def activate_extract_button(_trace_data, _n_data):
-    if len(_trace_data[_n_data].good.x)!=0:
-        return False
+def activate_extract_button(_trace_fit, _n_trace):
+    try:
+        _trace_fit[_n_trace]
+    except:
+        return True,True
+    debug()
+    
+    if len(_trace_fit[_n_trace].good.x)!=0:
+        return False,False
     else:
-        return True
+        return True,True
 
 
 
@@ -446,42 +520,109 @@ def activate_refit_button(_trace_fit_store, _status, _n_trace):
 
 @app.callback(
     ServersideOutput("store_from_find_trace",'data'),
+    Output("trace_table", 'data'),
+    Output("shape_idx",'data'),
+    Output("trace_action",'data'),
     #---------------------
     Trigger("find-trace",'n_clicks'),
+    Trigger("expand-trace",'n_clicks'),
     #---------------------
     State("2d-data",'data'),
     State("auto-find",'on'),
     State("trace_table",'data'),
     State("n_trace",'data'),
+    State("shape_idx",'data'),
     #---------------------
     prevent_initial_call=True
 )
-def find_trace(_2d_data, _auto, _trace_table, _n_trace):
+def find_trace(_2d_data, _auto, _trace_table, _n_trace, _shape_idx):
     debug()
     
+    ctx = callback_context
+    trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
     
-    if _auto:
-        X_DIM=_2d_data['X_DIM']
-    
-        #it will start from the midpoint and first search on the right and then go back from the middle and search on the left
+    if trigger_id == "find-trace":
+        if _auto:
+            X_DIM=_2d_data['X_DIM']
+        
+            #it will start from the midpoint and first search on the right and then go back from the middle and search on the left
 
-        right_data=list(range(int(X_DIM/2)+1,X_DIM))
-        left_data=list(range(int(X_DIM/2),-1,-1))
+            right_data=list(range(int(X_DIM/2)+1,X_DIM))
+            left_data=list(range(int(X_DIM/2),-1,-1))
+            
+            cen_0=em.guess_trace_position(np.array(_2d_data['data'])[:,int(X_DIM/2)])
+            
+            
+            selection=[[right_data,[cen_0]*len(right_data)],[left_data,[cen_0]*len(left_data)]]
+            
+            xx,yy,ss,pop,bg=em.find_trace(selection, _2d_data['data'], auto=_auto)
+            
+            _shape_idx=_shape_idx+1
+            
+            path=em.points_to_svg(xx,yy)
+            
+            _trace_table[_n_trace]['trace_paths'].append(as_path(path,_color=em.get_color(_n_trace)))
+            _trace_table[_n_trace]['trace_paths'][-1]['shape_id']=_shape_idx
         
-        cen_0=em.guess_trace_position(np.array(_2d_data['data'])[:,int(X_DIM/2)])
+            _trace_table[_n_trace]['status']='found'
+            
+            
+            return [xx,yy,ss,pop,bg], _trace_table, _shape_idx, 'copy'
+            
+        else:
+            selection=[]
+            for el in _trace_table[_n_trace]['trace_paths']:
+                xx,yy,orientation=em.get_points_from_path(el['path'])
+                selection.append([xx,yy])
         
-        
-        selection=[[right_data,[cen_0]*len(right_data)],[left_data,[cen_0]*len(left_data)]]
-        
+            xx,yy,ss,pop,bg=em.find_trace(selection, _2d_data['data'], auto=_auto)
+            
+            return [xx,yy,ss,pop,bg], no_update, no_update, no_update
+    
     else:
+        X_DIM=_2d_data['X_DIM']
+
         selection=[]
         for el in _trace_table[_n_trace]['trace_paths']:
             xx,yy,orientation=em.get_points_from_path(el['path'])
             selection.append([xx,yy])
+        
+        left_data = list(range(selection[0][0][0],-1,-1))
+        selection_left = [[left_data,[selection[0][1][0]]*len(left_data)]]
+        
+        xx_l,yy_l,ss_l,pop_l,bg_l = em.find_trace(selection_left, _2d_data['data'], auto=1)
+        xx,yy,ss,pop,bg=em.find_trace([selection[0]], _2d_data['data'], auto=0)
+        
+        xx,yy,ss,pop,bg = [x+y for x,y in zip([xx_l,yy_l,ss_l,pop_l,bg_l], [xx,yy,ss,pop,bg])]
+        
+        for s in range(1,len(selection)):
+            mid_data = list(range(selection[s-1][0][-1],selection[s][0][0]))
+            selection_mid = [[mid_data,[selection[s-1][1][0]]*len(mid_data)]]
+            xx_m,yy_m,ss_m,pop_m,bg_m = em.find_trace(selection_mid, _2d_data['data'], auto=1)
+            
+            xx_s,yy_s,ss_s,pop_s,bg_s=em.find_trace([selection[s]], _2d_data['data'], auto=0)
+            
+            xx,yy,ss,pop,bg = [x+y+z for x,y,z in zip([xx,yy,ss,pop,bg], [xx_m,yy_m,ss_m,pop_m,bg_m], [xx_s,yy_s,ss_s,pop_s,bg_s])]
+            
+
+        right_data = list(range(selection[-1][0][-1],X_DIM))
+        selection_right = [[right_data,[selection[-1][1][-1]]*len(right_data)]]
+        
+        xx_r,yy_r,ss_r,pop_r,bg_r=em.find_trace(selection_right, _2d_data['data'], auto=1)
+
+        xx,yy,ss,pop,bg = [x+y for x,y in zip([xx,yy,ss,pop,bg], [xx_r,yy_r,ss_r,pop_r,bg_r])]
+
+        _shape_idx=_shape_idx+1
+            
+        path=em.points_to_svg(xx,yy)
+        
+        _trace_table[_n_trace]['trace_paths'].append(as_path(path,_color=em.get_color(_n_trace)))
+        _trace_table[_n_trace]['trace_paths'][-1]['shape_id']=_shape_idx
     
-    xx,yy,ss=em.find_trace(selection,_2d_data['data'], auto=_auto)
+        _trace_table[_n_trace]['status']='found'
+        
+        return [xx,yy,ss,pop,bg], _trace_table, _shape_idx, 'expand'
     
-    return [xx,yy,ss]
     
     
 @app.callback(
@@ -531,7 +672,7 @@ def update_trace_store_and_table(_fit, _find, _trace_data, _n_trace):
         except:
             _trace_data.append(em.dTrace())
     
-    xx,cc,ss=_find
+    xx,cc,ss,pop,bg=_find
     _trace_data[_n_trace].all.x = xx
     _trace_data[_n_trace].all.c = cc
     _trace_data[_n_trace].all.s = ss
@@ -558,14 +699,19 @@ def update_trace_store_and_table(_fit, _find, _trace_data, _n_trace):
     Output("sigma_tracker",'figure'),
     #---------------------
     Input("trace-store",'data'),
+    Input("n_trace",'data'),
     #---------------------
     State("trace_tracker",'figure'),
     State("sigma_tracker",'figure'),
-    State("n_trace",'data'),
     #---------------------
     prevent_initial_call=True
 )
-def trace_and_sigma_figures(_trace_fit, _fig_trace, _fig_sigma, _n_trace):
+def trace_and_sigma_figures(_trace_fit, _n_trace, _fig_trace, _fig_sigma):
+    try:
+        _trace_fit[_n_trace]
+    except:
+        return initials.tracetracker, initials.sigmatracker
+        
     debug()
 
     if len(_trace_fit[_n_trace].all.x)==0:
@@ -650,23 +796,171 @@ def trace_and_sigma_figures(_trace_fit, _fig_trace, _fig_sigma, _n_trace):
     return _fig_trace,_fig_sigma
 
 
+#trace profile figure handler
 @app.callback(
-    Output("spectrum",'figure'),
+    Output("trace-profile",'figure'),
+    #---------------------
+    Input("store_from_find_trace",'data'),
+    Input("trace_tracker", 'clickData'),
+    #---------------------
+    State("n_trace",'data'),
+    State("2d-data",'data'),
+    State("trace-profile",'figure'),
+    #---------------------
+    prevent_initial_call=True
+)
+def trace_profile_figures(_trace_data, _click_data, _n_trace, _2d_data, _fig_profile):#, _fig_trace, _fig_sigma):
+        
+    debug()
+    
+    ctx = callback_context
+    trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
+    if trigger_id=="trace_tracker":
+        X_MID=_click_data['points'][0]['x']
+        Y_MID=_click_data['points'][0]['y']
+        
+    
+    else:
+        X_MID_idx=int((len(_trace_data[0]) - 1)/2)
+        X_MID=_trace_data[0][X_MID_idx]
+        Y_MID=_trace_data[1][X_MID_idx]
+    
+    xx=list(range(int(Y_MID-30),int(Y_MID+30)))
+    
+    _fig_profile['data'][0]['y'] = _2d_data['data'][:,X_MID][int(Y_MID-30):int(Y_MID+30)]
+    _fig_profile['data'][0]['x'] = xx
+    _fig_profile['data'][0]['name']='data'
+    
+    height=max(_fig_profile['data'][0]['y'])-min(_fig_profile['data'][0]['y'])
+    top=max(_fig_profile['data'][0]['y'])+0.055*height
+    bottom=min(_fig_profile['data'][0]['y'])-0.055*height
+    
+    _fig_profile['data'].append({})
+    _fig_profile['data'].append({})
+    
+    for i,el in enumerate(_trace_data[0]):
+        if el==X_MID:
+            popt=_trace_data[3][i]
+            bg=_trace_data[4][i]
+    
+    
+    _fig_profile['data'][1]['x']=xx
+    _fig_profile['data'][1]['y']=em.gauss(xx,*popt)+np.polyval(bg,xx)
+    _fig_profile['data'][1]['line']={'color': '#red', 'dash': 'solid'}
+    _fig_profile['data'][1]['name']='gaussian fit'
+    
+    _fig_profile['data'][2]['x']=xx
+    _fig_profile['data'][2]['y']=np.polyval(bg,xx)
+    _fig_profile['data'][2]['line']={'color': 'orange', 'dash': 'dash'}
+    _fig_profile['data'][2]['name']='linear background'
+    
+
+    if 'shapes' not in _fig_profile['layout']:
+        _fig_profile['layout']['shapes']=[]
+        
+    _fig_profile['layout']['shapes'].append({
+        'type': 'rect',
+        'x0':Y_MID-25,
+        'x1':Y_MID-15,
+        'y0':bottom,
+        'y1':top,
+        'line':{'color':'yellow','width':2},
+        'fillcolor':'yellow',
+        'layer':'below',
+        'showlegend': False,
+        'editable': True
+    })
+
+        
+    _fig_profile['layout']['shapes'].append({
+        'type': 'rect',
+        'x0':Y_MID+15,
+        'x1':Y_MID+25,
+        'y0':bottom,
+        'y1':top,
+        'line':{'color':'yellow','width':2},
+        'fillcolor':'yellow',
+        'layer':'below',
+        'showlegend': False,
+        'editable': True
+    })
+
+
+    return _fig_profile
+    
+    
+@app.callback(
+    Output("spectrum-store",'data'),
+    #Output("spectrum-arc-store",'data'),
     #---------------------
     Trigger("extract-trace",'n_clicks'),
     #---------------------
     State("2d-data",'data'),
+    State("2d-data-arc",'data'),
     State("trace-store",'data'),
-    State("spectrum",'figure'),
+    State("spectrum-store",'data'),
+    State("spectrum-arc-store",'data'),
     State("n_trace",'data'),
     #---------------------
     prevent_initial_call=True
 )
-def extract_trace(_2d_data, _trace_store, _spectrum, _n_trace):
+def extract_trace(_2d_data, _2d_data_arc, _trace_store, _spectrum_store, _spectrum_arc_store, _n_trace):
     debug()
 
-    _spectrum['data'][0]['x']=_trace_store[_n_trace].all.x
-    _spectrum['data'][0]['y']=em.extract_trace(_2d_data["data"],_trace_store[_n_trace])
+    if _spectrum_store is None:
+        _spectrum_store=[]
+    if _spectrum_arc_store is None:
+        _spectrum_arc_store=[]
+    
+    print(_n_trace)
+    
+    for i in range(_n_trace+1):
+        try:
+            _spectrum_store[i]
+        except:
+            _spectrum_store.append({})
+            _spectrum_arc_store.append({})
+
+    s_x = _trace_store[_n_trace].all.x
+    s_y = em.extract_trace(_2d_data['data'],_trace_store[_n_trace])
+    
+    _spectrum_store[_n_trace]['x'] = s_x
+    _spectrum_store[_n_trace]['y'] = s_y
+    _spectrum_store[_n_trace]['filename'] = _2d_data['filename']
+    #_spectrum_store[_n_trace]['header'] = _2d_data['header']
+    
+    #this is not yet implemented
+    #arc_y = em.extract_trace(_2d_data_arc['data'], _trace_store[_n_trace], arc=True)
+    
+#    _spectrum_arc_store[_n_trace]['x'] = s_x
+#    _spectrum_arc_store[_n_trace]['y'] = s_y
+#    _spectrum_arc_store[_n_trace]['filename'] = _2d_data_arc['filename']
+#    _spectrum_arc_store[_n_trace]['header'] = _2d_data_arc['header']
+    
+    return _spectrum_store#, _spectrum_arc_store
+    
+
+
+@app.callback(
+    Output("spectrum",'figure'),
+    #---------------------
+    Input("spectrum-store",'data'),
+    Input("n_trace",'data'),
+    #---------------------
+    State("spectrum",'figure'),
+    #---------------------
+    prevent_initial_call=True
+)
+def plot_trace(_spectrum_store, _n_trace, _spectrum):
+    try:
+        _spectrum_store[_n_trace]
+    except:
+        return initials.spectrum
+        
+    debug()
+
+    _spectrum['data'][0]['x'] = _spectrum_store[_n_trace]['x']
+    _spectrum['data'][0]['y'] = _spectrum_store[_n_trace]['y']
     
     return _spectrum
 
@@ -688,20 +982,22 @@ def extract_trace(_2d_data, _trace_store, _spectrum, _n_trace):
 def add_new_trace(_style,_n_trace,_trace_table):
     
     debug()
-    _n_trace=_n_trace+1
+    new_trace=len(_trace_table)
+    
+    col=em.get_trace_col(_trace_table)
     
     _trace_table.append({
-        'trace_id':_n_trace+1,
-        'style':em.get_trace_style(_n_trace,'d'),
+        'trace_id':new_trace+1,
+        'style': '<img src="assets/style_{}_d.png" alt="trace style" width="40">'.format(col),
         'visible_icon':'<img src="assets/visible.png" alt="visible" width="40">',
         'status':'empty',
         'visible':1,
         'trace_paths':[]
     })
     
-    _style[2] = {"if": {"row_index": _n_trace}, "backgroundColor": "rgba(150, 180, 225, 0.2)"}
+    _style[2] = {'if': {'row_index': new_trace}, 'backgroundColor': 'rgba(150, 180, 225, 0.2)'}
     
-    return _n_trace,_style,_trace_table,'new_trace'
+    return new_trace,_style,_trace_table,'new_trace'
     
 
 @app.callback(
@@ -728,8 +1024,8 @@ def style_selected_rows(_cell, _trace_table, _style, _n_trace):
     
     #if the user changes raw, just update the active raw, and don't actually grab any button associated with the clicked cell
     if _n_trace!=_cell['row']:
-        _style[2] = {"if": {"row_index": _cell['row']}, "backgroundColor": "rgba(150, 180, 225, 0.2)"}
-        return _cell['row'], _style, None, [], _trace_table, dash.no_update
+        _style[2] = {'if': {'row_index': _cell['row']}, 'backgroundColor': 'rgba(150, 180, 225, 0.2)'}
+        return _cell['row'], _style, None, [], _trace_table, 'none'
 
 
     #set visible/not_visible
@@ -748,7 +1044,7 @@ def style_selected_rows(_cell, _trace_table, _style, _n_trace):
                 _trace_table[_n_trace]['trace_paths'][tr]['visible']=True
     
     
-    return dash.no_update, dash.no_update, None, [], _trace_table, 'edit'
+    return no_update, no_update, None, [], _trace_table, 'edit'
 
 
 
@@ -771,7 +1067,7 @@ def move_trace_up_down(_trace_table, _n_trace, _shift, _shift_unit):
     
     #to implement the shift in arcseconds
     
-    ctx = dash.callback_context
+    ctx = callback_context
     trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
     
     if trigger_id=="move_up_button":
@@ -804,9 +1100,11 @@ def copy_trace(_trace_table, _n_trace, _shape_idx):
     
     new_trace=len(_trace_table)
     
+    col=em.get_trace_col(_trace_table)
+    
     _trace_table.append({
         'trace_id':new_trace+1,
-        'style':em.get_trace_style(new_trace,'d'),
+        'style': '<img src="assets/style_{}_d.png" alt="trace style" width="40">'.format(col),
         'visible_icon':'<img src="assets/visible.png" alt="visible" width="40">',
         'status':_trace_table[_n_trace]['status'],
         'visible':1,
@@ -846,36 +1144,65 @@ def copy_trace(_trace_table, _n_trace, _shape_idx):
 def delete_trace(_trace_table, _n_trace, _style, _deleted_traces):
     debug()
     
+    #changing the indexes of the remaining traces
+    for tr in range(_n_trace,len(_trace_table)):
+        _trace_table[tr]['trace_id']=_trace_table[tr]['trace_id']-1
+    
     _deleted_traces.append(_trace_table.pop(_n_trace))
     
-    _style[2] = {"if": {"row_index": _n_trace}, "backgroundColor": "rgba(150, 180, 225, 0.2)"}
+    _style[2] = {'if': {'row_index': _n_trace}, 'backgroundColor': 'rgba(150, 180, 225, 0.2)'}
 
     return _n_trace-1, _trace_table, _style, 'delete', _deleted_traces
 
 
 @app.callback(
+    Output("trace_table", 'data'),
+    #---------------------
+    Trigger("write-out", 'n_clicks'),
+    #---------------------
+    State("spectrum-store",'data'),
+    State("spectrum-arc-store",'data'),
+    State("trace_table", 'data'),
+    State("n_trace",'data'),
+    #---------------------
+    prevent_initial_call=True
+)
+def write_out_spectrum(_spectrum, _spectrum_arc, _trace_table, _n_trace):
+    debug()
+    
+    em.write_out(_spectrum[_n_trace], _spectrum_arc[_n_trace])
+    
+    _trace_table[_trace_table]['status']='written out'
+    
+    return _trace_table
+    
+
+
+#this is just for debuggin. I put an extra button to print out what I need to check
+@app.callback(
     Output("none",'children'),
     #---------------------
     Trigger("tester",'n_clicks'),
     #---------------------
-    State("2d",'figure'),
-    State("n_trace",'data'),
+    #State("2d",'figure'),
+    #State("trace_table",'data'),
+    #State("n_trace",'data'),
+    State("cut",'figure'),
     #---------------------
     prevent_initial_call=True
     )
-def add_new_trace(_inp,_n_trace):
-    for el in _inp['layout']['shapes']:
-        print(el)
+def tester(_inp):#,_n_trace):
+    for line in _inp['data'][0]:
+        print(line,_inp['data'][0][line])
+#    for el in _inp['layout']['shapes']:
+#        print(el)
 #    print(len(_table))
-#    for el in range(len(_table)):
-#        print(el,len(_table[el]['trace_paths']))
-#        for item in _table[el]['trace_paths']:
+#    for el in range(len(_inp[_n_trace])):
+#        print(el,len(_inp[el]['trace_paths']))
+#        for item in _inp[el]['trace_paths']:
 #            print(item['id_in_fig'],item['path'])
+#        print(_inp[_n_trace][el])
     return 0
-
-
-
-
 
 
 

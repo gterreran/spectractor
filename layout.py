@@ -6,11 +6,15 @@ import initials
 
 
 layout = html.Div([
-    #dummy div to use as input to inizialize the store at launch, which for some reason it fails.
+    #dummy div to use as input to inizialize the store at launch, which for some reason fails.
     html.Div(id='none',children=[],style={'display': 'none'}),
     dcc.Store(id='2d-data'),
+    dcc.Store(id='2d-data-arc'),
     dcc.Store(id='2d-scales'),
     dcc.Store(id='trace-store'),
+    dcc.Store(id='spectrum-store'),
+    dcc.Store(id='spectrum-arc-store'),
+    dcc.Store(id='trace-profile-store'),
     dcc.Store(id='n_trace',data=-1),
     dcc.Store(id='store_from_find_trace'),
     dcc.Store(id='store_from_fit_trace'),
@@ -39,6 +43,10 @@ layout = html.Div([
                 style={'display': 'inline-block'}
             ),
             html.Div(
+                dcc.Upload(id="load-2d-arc",children=html.Button('Upload 2d arc', n_clicks=0)),
+                style={'display': 'inline-block'}
+            ),
+            html.Div(
                 dcc.RadioItems(
                     id='drawing-style',
                     options=[
@@ -55,6 +63,10 @@ layout = html.Div([
             ),
             html.Div(
                 daq.BooleanSwitch(id='auto-find', on=False, label="Auto find", labelPosition="top"),
+                style={'display': 'inline-block'}
+            ),
+            html.Div(
+                html.Button('Expand trace', id='expand-trace', n_clicks=0, disabled=True),
                 style={'display': 'inline-block'}
             ),
             html.Div(
@@ -194,6 +206,10 @@ layout = html.Div([
                     html.Button('New trace', id='new-trace', n_clicks=0),
                     style={'width': '40%','display': 'inline-block'}
                 ),
+                html.Div(
+                    html.Button('Write out', id='write-out', n_clicks=0, disabled=True),
+                    style={'display': 'inline-block'}
+                ),
                 html.Button(
                     children=[html.Img(src='assets/delete.png', style={'width':'60px','margin-left': '0px'})],
                     id="delete_button", n_clicks=0,
@@ -284,7 +300,7 @@ layout = html.Div([
             style={'width': '35%','display': 'inline-block'}
             ),
             html.Div(
-                dcc.Graph(id="cut_display"),
+                dcc.Graph(id="trace-profile",figure=initials.trace_profile),
                 style={'width': '30%','display': 'inline-block'}
             )
         ]),

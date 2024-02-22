@@ -6,6 +6,8 @@ from scipy.interpolate import LSQUnivariateSpline
 import io
 import base64
 import matplotlib.pyplot as plt
+import astropy.io.fits as pf
+
 plt.switch_backend('Agg')
 
 def gauss(x, a,x0,sigma):
@@ -58,12 +60,12 @@ def find_trace(_sections,_data,auto=0):
                     pass
             
             if success:
-                trace.append([xx[i],popt[1],np.fabs(popt[2])])
+                trace.append([xx[i],popt[1],np.fabs(popt[2]),popt,p])
            
     trace=sorted(trace)
-    x,c,s=zip(*trace)
+    x,c,s,popt,bg=zip(*trace)
 
-    return list(x),list(c),list(s)
+    return list(x),list(c),list(s),list(popt),list(bg)
 
 
 
@@ -122,7 +124,7 @@ class dTrace:
 def fit_trace(_positions,_func_cen_lab,_order_cen,_func_sig_lab,_order_sig):
         
 
-    good_x,good_c,good_s=_positions
+    good_x,good_c,good_s=_positions[:-2]
 
     bad_x=[]
     bad_c=[]
@@ -203,28 +205,34 @@ def fit_trace(_positions,_func_cen_lab,_order_cen,_func_sig_lab,_order_sig):
 
 
 
-def extract_trace(_data,_trace_store):
+def extract_trace(_data,_trace_store, arc=False):
     d=np.array(_data)
     
     pix=np.arange(1,len(d[0])+1)
     
     spectrum=[]
+    spectrum_arc=[]
     
     for c in _trace_store.all.x:
         col=np.array(d[:,c])
         cen=_trace_store.func.c.eval(c+1,_trace_store.opt.c)
         sigma=_trace_store.func.s.eval(c+1,_trace_store.opt.s)
 
-        bg=np.where(((pix>cen-4.5*sigma)&(pix<cen-2.5*sigma))|((pix>cen+2.5*sigma)&(pix<cen+4.5*sigma)))
+        if not arc:
+            bg=np.where(((pix>cen-4.5*sigma)&(pix<cen-2.5*sigma)) | ((pix>cen+2.5*sigma)&(pix<cen+4.5*sigma)))
 
-        tr=np.where((pix>cen-25)&(pix<cen+25))
+            tr=np.where((pix>cen-25)&(pix<cen+25))
 
 
-        p=np.polyfit(pix[bg],col[bg],1)
-        res=col[tr]-np.polyval(p,pix[tr])
-        popt,pcov=curve_fit(lambda x,a,cc:gauss(x,a,cc,sigma),pix[tr],res,p0=[200,cen])
+            p=np.polyfit(pix[bg],col[bg],1)
+            res=col[tr]-np.polyval(p,pix[tr])
+            popt,pcov=curve_fit(lambda x,a,cc:gauss(x,a,cc,sigma),pix[tr],res,p0=[200,cen])
 
-        spectrum.append(popt[0]*sigma*np.sqrt(2*np.pi))
+            spectrum.append(popt[0]*sigma*np.sqrt(2*np.pi))
+
+        else:
+            sec=np.where((pix>cen-5*sigma)&(pix<cen+5*sigma))
+            spectrum_arc.append(np.sum(col[sec]))
 
     return spectrum
 
@@ -354,9 +362,17 @@ def create_children(obj,type):
 
 
 
-def get_trace_style(_i,_s):
-    
-    return '<img src="assets/style_{}_{}.png" alt="delete trace" width="40">'.format(str(_i),_s)
+def get_trace_col(_table):
+    for i in range(10):
+        accepted=1
+        for el in _table:
+            if int(el['style'].split('_')[1]) == i:
+                accepted=0
+                break
+        if accepted:
+            return i
+    #if the table is empty, it won't return 
+    return 0
     
 #    fig=plt.figure()
 #    fig.set_size_inches(0.55, 0.2)
@@ -392,3 +408,64 @@ def shift_path(_path,_pix):
     
     #removing the extra L we put in the string
     return out_ss[:-1]
+
+def write_out(_spectrum, _spectrum_arc):
+
+    sp_out=_spectrum['filename'][:-5]+'extracted.fits'
+
+    _spectrum['header']['NAXIS']=1
+    _spectrum['header']['NAXIS1']=hh['NAXIS2']
+    del _spectrum['header']['NAXIS2']
+    _spectrum['header']['CTYPE1']='PIXEL'
+    _spectrum['header']['CTYPE2']='LINEAR'
+    _spectrum['header']['CRVAL1']=1.
+    _spectrum['header']['CRPIX1']=1.
+    _spectrum['header']['CD1_1']=1.
+
+    del _spectrum['header']['CRVAL2']
+    del _spectrum['header']['CRPIX2']
+    #del hh['CD1_2']
+    #del hh['CD2_1']
+    #del hh['CD2_2']
+    #hh['WAT0_001']='system=equispec'
+    #hh['WAT1_001']='wtype=linear label=Pixel'
+    #hh['WAT2_001']='wtype=linear'
+    del _spectrum['header']['LTV1']
+    #del hh['LTV2']
+    
+    if os.path.isfile(sp_out):
+        os.system('rm '+sp_out)
+    pf.writeto(sp_out, _spectrum['y'], _spectrum['header'])
+
+    if _spectrum_arc!= {}:
+        arc_out=_spectrum_arc['filename'][:-5]+'extracted.fits'
+        _spectrum['header']['REFSPEC1']=arc_out
+
+        _spectrum_arc['header']['CTYPE1']='PIXEL'
+        _spectrum_arc['header']['CRVAL1']=1.
+        _spectrum_arc['header']['CRPIX1']=1.
+        _spectrum_arc['header']['CD1_1']=1.
+
+        del _spectrum_arc['header']['CTYPE2']
+        del _spectrum_arc['header']['CRVAL2']
+        del _spectrum_arc['header']['CRPIX2']
+        #del hh_arc['CD1_2']
+        #del hh_arc['CD2_1']
+        del _spectrum_arc['header']['CD2_2']
+
+        _spectrum_arc['header']['WCSDIM']=1.
+        _spectrum_arc['header']['LTM1_1']=1.
+        del _spectrum_arc['header']['LTM2_2']
+        #
+        #hh_arc['WAT0_001']='system=equispec'
+        #hh_arc['WAT1_001']='wtype=linear label=Pixel'
+        #del hh_arc['WAT2_001']
+        #
+        #hh_arc['CDELT1']=1.
+        del _spectrum_arc['header']['LTV1']
+        #del hh_arc['LTV2']
+
+        if os.path.isfile(arc_out):
+            os.system('rm '+arc_out)
+        pf.writeto(arc_out, _spectrum_arc['y'], _spectrum_arc['header'])
+

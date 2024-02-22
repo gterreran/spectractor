@@ -1,3 +1,14 @@
+0.3.0
+-Taken back after quite some time. So not sure what changed since the last version
+-Can do full easy extraction
+-Wavelength calibration is there but mainly commented out because it was not working right away
+-A window showing the trace section and the aperture size and background is shown, but it is not possible to manually change it just yet.
+
+0.2.0
+-Introduced extend trace button
+-Changing tracetrack and sigmatrack according to selection in table
+-Bug fixes
+
 0.1.0 - February 23rd 2022 
 -Restructured the data structure
 -Added table of traces
